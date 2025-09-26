@@ -1,6 +1,5 @@
 import socket
 import struct
-import pickle
 import cv2
 import json
 import threading
@@ -8,22 +7,21 @@ import numpy as np
 import time
 import os
 import sys
-import subprocess
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from motion_detection import detect_motion, draw_motion_visualization
-from face_detection import load_face_detection_model, detect_faces
+from face_detection import load_face_detection_model
 from camera_utils import (
     initialize_cameras, release_cameras, create_video_grid,
     get_no_signal_frame, get_waiting_frame
 )
 from logger import motion_logger
 
+
 def get_local_ip():
     """Автоматическое определение IP адреса"""
     try:
-        # Создаем временное соединение чтобы узнать свой IP
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
@@ -32,7 +30,7 @@ def get_local_ip():
     except:
         return "0.0.0.0"
 
-# Используем автоматическое определение IP
+
 HOST = get_local_ip()
 PORT_VIDEO = 9999
 PORT_CMD = 9998
@@ -45,15 +43,14 @@ print(f"Video port: {PORT_VIDEO}")
 print(f"Command port: {PORT_CMD}")
 print("=" * 50)
 
+
 class HeadlessSurveillanceSystem:
     def __init__(self):
-        # Пробуем разные индексы камер
         self.camera_indices = self.detect_cameras()
         self.caps = []
         self.face_net = None
-        self.masks = {}
 
-        # Состояние камер
+        # Состояние
         self.motion_detected = {}
         self.prev_frames = {}
         self.last_motion_time = {}
@@ -71,9 +68,9 @@ class HeadlessSurveillanceSystem:
             self.motion_contours[cam_idx] = []
             self.last_check_time[cam_idx] = 0
 
-        self.camera_triggered = self.camera_indices[:]  # Все камеры по умолчанию
-        self.camera_faces = self.camera_indices[:]
-        self.camera_motion = self.camera_indices[:]
+        self.camera_triggered = self.camera_indices[:]  # камеры с включением по движению
+        self.camera_faces = self.camera_indices[:]      # камеры для лиц
+        self.camera_motion = self.camera_indices[:]     # камеры для движения
         self.MOTION_TIMEOUT = 30
         self.CHECK_INTERVAL = 1
         self.MOTION_THRESHOLD = 25
@@ -82,10 +79,9 @@ class HeadlessSurveillanceSystem:
         self.active_motion_cameras = set()
 
     def detect_cameras(self):
-        """Обнаружение работающих камер"""
         working_cameras = []
         print("[SYSTEM] Поиск доступных камер...")
-        
+
         for i in range(4):  # Проверяем камеры 0-3
             cap = cv2.VideoCapture(i)
             if cap.isOpened():
@@ -98,23 +94,21 @@ class HeadlessSurveillanceSystem:
                 cap.release()
             else:
                 print(f"[SYSTEM] Камера {i} не открывается")
-        
+
         if not working_cameras:
             print("[SYSTEM] Предупреждение: не найдено ни одной работающей камеры!")
-            return [0]  # Все равно пробуем использовать камеру 0
-        
+            return [0]
+
         return working_cameras
 
     def initialize(self):
-        """Инициализация системы"""
         motion_logger.log_system_event("Инициализация системы видеонаблюдения (HEADLESS)")
 
-        # Загрузка модели детектирования лиц (пропускаем ошибку)
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             face_proto = os.path.join(script_dir, "opencv_face_detector.pbtxt")
             face_model = os.path.join(script_dir, "opencv_face_detector_uint8.pb")
-            
+
             if os.path.exists(face_proto) and os.path.exists(face_model):
                 self.face_net = load_face_detection_model(face_proto, face_model)
                 motion_logger.log_system_event("Модель детектирования лиц загружена")
@@ -123,10 +117,8 @@ class HeadlessSurveillanceSystem:
         except Exception as e:
             motion_logger.log_system_event(f"Ошибка загрузки модели лиц: {e}")
 
-        # Инициализация камер
         self.caps = initialize_cameras(self.camera_indices)
-        
-        # Логирование настроек
+
         settings = {
             'working_cameras': self.camera_indices,
             'timeout': self.MOTION_TIMEOUT,
@@ -134,19 +126,16 @@ class HeadlessSurveillanceSystem:
         }
         motion_logger.log_settings(settings)
 
-        motion_logger.log_system_event(f"Система инициализирована. Работающие камеры: {self.camera_indices}")
+        motion_logger.log_system_event(f"Система инициализирована. Камеры: {self.camera_indices}")
 
     def process_camera_frame(self, camera_idx, frame, current_time):
-        """Обработка кадра камеры"""
         if frame is None:
             return get_no_signal_frame(camera_idx)
 
         frame = cv2.resize(frame, (640, 480))
 
-        # Камера в режиме triggered + motion
         if camera_idx in self.camera_triggered and camera_idx in self.camera_motion:
             if self.motion_detected[camera_idx]:
-                # Активный режим
                 if current_time - self.last_motion_check.get(camera_idx, 0) > 0.5:
                     if self.prev_frames[camera_idx] is not None:
                         motion, contours = detect_motion(
@@ -158,7 +147,6 @@ class HeadlessSurveillanceSystem:
                     self.last_motion_check[camera_idx] = current_time
                     self.prev_frames[camera_idx] = frame.copy()
 
-                # Проверка таймаута
                 time_since_last_motion = current_time - self.last_motion_time[camera_idx]
                 time_left = int(self.MOTION_TIMEOUT - time_since_last_motion)
                 if time_since_last_motion > self.MOTION_TIMEOUT:
@@ -170,12 +158,10 @@ class HeadlessSurveillanceSystem:
                     self.last_check_time[camera_idx] = current_time
                     return get_waiting_frame(camera_idx)
 
-                # Активный кадр
                 display_frame = draw_motion_visualization(frame, [], camera_idx, None, time_left)
                 return display_frame
 
             else:
-                # Режим ожидания
                 time_since_last_check = current_time - self.last_check_time[camera_idx]
                 if time_since_last_check >= self.CHECK_INTERVAL:
                     if self.prev_frames[camera_idx] is not None:
@@ -201,10 +187,9 @@ class HeadlessSurveillanceSystem:
         return frame
 
     def get_grid_frame(self):
-        """Получение текущего кадра сетки для отправки клиенту"""
         frames = []
         current_time = time.time()
-        
+
         for idx, cap in enumerate(self.caps):
             camera_idx = self.camera_indices[idx]
             if cap.isOpened():
@@ -215,19 +200,17 @@ class HeadlessSurveillanceSystem:
                     processed_frame = get_no_signal_frame(camera_idx)
             else:
                 processed_frame = get_no_signal_frame(camera_idx)
-            
+
             small_frame = cv2.resize(processed_frame, (320, 240))
             frames.append(small_frame)
 
-        # Создаем сетку 2x2
         while len(frames) < 4:
             frames.append(get_no_signal_frame(len(frames)))
-        
+
         grid = create_video_grid(frames, (2, 2), (640, 480))
         return grid
 
     def cleanup(self):
-        """Очистка ресурсов"""
         for cam_idx in list(self.active_motion_cameras):
             duration = time.time() - self.motion_start_time[cam_idx]
             motion_logger.log_motion_stopped(cam_idx, duration, 0)
@@ -243,22 +226,18 @@ class OctoServer:
         self.running = True
         self.current_grid = None
         self.frame_lock = threading.Lock()
-        
+
         self.system_thread = threading.Thread(target=self.run_system_loop)
         self.system_thread.daemon = True
         self.system_thread.start()
 
     def run_system_loop(self):
-        """Основной цикл системы"""
         try:
             while self.running:
                 grid_frame = self.system.get_grid_frame()
-                
                 with self.frame_lock:
                     self.current_grid = grid_frame.copy()
-                
                 time.sleep(0.033)
-                
         except Exception as e:
             print(f"[SYSTEM] Ошибка: {e}")
 
@@ -280,11 +259,9 @@ class OctoServer:
             try:
                 conn, addr = server_socket.accept()
                 print(f"[SERVER] Видео-клиент подключен: {addr}")
-                
                 client_thread = threading.Thread(target=self.handle_video_client, args=(conn, addr))
                 client_thread.daemon = True
                 client_thread.start()
-                
             except Exception as e:
                 if self.running:
                     print(f"[SERVER] Ошибка: {e}")
@@ -293,19 +270,20 @@ class OctoServer:
         try:
             while self.running:
                 grid_frame = self.get_grid_frame()
-                
-                if grid_frame is not None:
-                    frame_data = data[:msg_size]
-                    data = data[msg_size:]
 
-# теперь frame_data это байты JPEG, а не pickle
-                    np_arr = np.frombuffer(frame_data, dtype=np.uint8)
-                    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                if grid_frame is not None:
+                    success, buffer = cv2.imencode('.jpg', grid_frame, [
+                        int(cv2.IMWRITE_JPEG_QUALITY), 80
+                    ])
+                    if success:
+                        # ✅ теперь отправляем чистый JPEG-байтстрим
+                        jpg_bytes = buffer.tobytes()
+                        message_size = struct.pack(">L", len(jpg_bytes))
+                        try:
+                            conn.sendall(message_size + jpg_bytes)
                         except (BrokenPipeError, ConnectionResetError):
                             break
-                
                 time.sleep(0.033)
-                
         except Exception as e:
             print(f"[SERVER] Ошибка: {e}")
         finally:
@@ -325,11 +303,9 @@ class OctoServer:
             try:
                 conn, addr = server_socket.accept()
                 print(f"[SERVER] Командный клиент подключен: {addr}")
-                
                 client_thread = threading.Thread(target=self.handle_command_client, args=(conn, addr))
                 client_thread.daemon = True
                 client_thread.start()
-                
             except Exception as e:
                 if self.running:
                     print(f"[SERVER] Ошибка: {e}")
@@ -338,20 +314,19 @@ class OctoServer:
         try:
             while self.running:
                 conn.settimeout(1.0)
-                
                 try:
                     data = conn.recv(4096)
                     if not data:
                         break
                 except socket.timeout:
                     continue
-                
+
                 try:
                     cmd = json.loads(data.decode("utf-8"))
                     print(f"[SERVER] Команда от {addr}: {cmd}")
 
                     response = {"status": "ok", "command": cmd["action"]}
-                    
+
                     if cmd["action"] == "set_timeout":
                         self.system.MOTION_TIMEOUT = int(cmd["value"])
                     elif cmd["action"] == "set_threshold":
@@ -374,13 +349,12 @@ class OctoServer:
                             self.system.camera_motion.remove(cam)
                     elif cmd["action"] == "quit":
                         self.running = False
-                    
+
                     conn.send(json.dumps(response).encode("utf-8"))
 
                 except Exception as e:
                     response = {"status": "error", "message": str(e)}
                     conn.send(json.dumps(response).encode("utf-8"))
-                    
         except Exception as e:
             print(f"[SERVER] Ошибка: {e}")
         finally:
@@ -396,22 +370,15 @@ class OctoServer:
     def run(self):
         try:
             print("[SERVER] Запуск сервера...")
-            
             video_thread = threading.Thread(target=self.video_stream)
             command_thread = threading.Thread(target=self.command_listener)
-            
             video_thread.daemon = True
             command_thread.daemon = True
-            
             video_thread.start()
             command_thread.start()
-            
-            print("[SERVER] Сервер запущен!")
-            print("[SERVER] Для остановки: Ctrl+C")
-            
+            print("[SERVER] Сервер запущен! Ctrl+C для остановки")
             while self.running:
                 time.sleep(1)
-                
         except KeyboardInterrupt:
             print("\n[SERVER] Остановка...")
         finally:
@@ -420,5 +387,4 @@ class OctoServer:
 
 if __name__ == "__main__":
     server = OctoServer()
-    server.run()\
-
+    server.run()

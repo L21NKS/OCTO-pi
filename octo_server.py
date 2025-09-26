@@ -295,16 +295,12 @@ class OctoServer:
                 grid_frame = self.get_grid_frame()
                 
                 if grid_frame is not None:
-                    success, buffer = cv2.imencode('.jpg', grid_frame, [
-                        int(cv2.IMWRITE_JPEG_QUALITY), 80
-                    ])
-                    
-                    if success:
-                        data = pickle.dumps(buffer, protocol=pickle.HIGHEST_PROTOCOL)
-                        message_size = struct.pack(">L", len(data))
-                        
-                        try:
-                            conn.sendall(message_size + data)
+                    frame_data = data[:msg_size]
+                    data = data[msg_size:]
+
+# теперь frame_data это байты JPEG, а не pickle
+                    np_arr = np.frombuffer(frame_data, dtype=np.uint8)
+                    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
                         except (BrokenPipeError, ConnectionResetError):
                             break
                 
@@ -425,3 +421,4 @@ class OctoServer:
 if __name__ == "__main__":
     server = OctoServer()
     server.run()\
+

@@ -9,9 +9,8 @@ import time
 import os
 import sys
 import subprocess
-import sys  
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from motion_detection import detect_motion, draw_motion_visualization
 from face_detection import load_face_detection_model, detect_faces
@@ -22,7 +21,9 @@ from camera_utils import (
 from logger import motion_logger
 
 def get_local_ip():
+    """Автоматическое определение IP адреса"""
     try:
+        # Создаем временное соединение чтобы узнать свой IP
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
@@ -31,6 +32,7 @@ def get_local_ip():
     except:
         return "0.0.0.0"
 
+# Используем автоматическое определение IP
 HOST = get_local_ip()
 PORT_VIDEO = 9999
 PORT_CMD = 9998
@@ -45,11 +47,13 @@ print("=" * 50)
 
 class HeadlessSurveillanceSystem:
     def __init__(self):
+        # Пробуем разные индексы камер
         self.camera_indices = self.detect_cameras()
         self.caps = []
         self.face_net = None
         self.masks = {}
 
+        # Состояние камер
         self.motion_detected = {}
         self.prev_frames = {}
         self.last_motion_time = {}
@@ -67,7 +71,7 @@ class HeadlessSurveillanceSystem:
             self.motion_contours[cam_idx] = []
             self.last_check_time[cam_idx] = 0
 
-        self.camera_triggered = self.camera_indices[:]  
+        self.camera_triggered = self.camera_indices[:]  # Все камеры по умолчанию
         self.camera_faces = self.camera_indices[:]
         self.camera_motion = self.camera_indices[:]
         self.MOTION_TIMEOUT = 30
@@ -78,10 +82,11 @@ class HeadlessSurveillanceSystem:
         self.active_motion_cameras = set()
 
     def detect_cameras(self):
+        """Обнаружение работающих камер"""
         working_cameras = []
         print("[SYSTEM] Поиск доступных камер...")
         
-        for i in range(4): 
+        for i in range(4):  # Проверяем камеры 0-3
             cap = cv2.VideoCapture(i)
             if cap.isOpened():
                 ret, frame = cap.read()
@@ -96,13 +101,15 @@ class HeadlessSurveillanceSystem:
         
         if not working_cameras:
             print("[SYSTEM] Предупреждение: не найдено ни одной работающей камеры!")
-            return [0]  
+            return [0]  # Все равно пробуем использовать камеру 0
         
         return working_cameras
 
     def initialize(self):
+        """Инициализация системы"""
         motion_logger.log_system_event("Инициализация системы видеонаблюдения (HEADLESS)")
 
+        # Загрузка модели детектирования лиц (пропускаем ошибку)
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             face_proto = os.path.join(script_dir, "opencv_face_detector.pbtxt")
@@ -116,8 +123,10 @@ class HeadlessSurveillanceSystem:
         except Exception as e:
             motion_logger.log_system_event(f"Ошибка загрузки модели лиц: {e}")
 
+        # Инициализация камер
         self.caps = initialize_cameras(self.camera_indices)
         
+        # Логирование настроек
         settings = {
             'working_cameras': self.camera_indices,
             'timeout': self.MOTION_TIMEOUT,
@@ -134,8 +143,10 @@ class HeadlessSurveillanceSystem:
 
         frame = cv2.resize(frame, (640, 480))
 
+        # Камера в режиме triggered + motion
         if camera_idx in self.camera_triggered and camera_idx in self.camera_motion:
             if self.motion_detected[camera_idx]:
+                # Активный режим
                 if current_time - self.last_motion_check.get(camera_idx, 0) > 0.5:
                     if self.prev_frames[camera_idx] is not None:
                         motion, contours = detect_motion(
@@ -147,6 +158,7 @@ class HeadlessSurveillanceSystem:
                     self.last_motion_check[camera_idx] = current_time
                     self.prev_frames[camera_idx] = frame.copy()
 
+                # Проверка таймаута
                 time_since_last_motion = current_time - self.last_motion_time[camera_idx]
                 time_left = int(self.MOTION_TIMEOUT - time_since_last_motion)
                 if time_since_last_motion > self.MOTION_TIMEOUT:
@@ -158,10 +170,12 @@ class HeadlessSurveillanceSystem:
                     self.last_check_time[camera_idx] = current_time
                     return get_waiting_frame(camera_idx)
 
+                # Активный кадр
                 display_frame = draw_motion_visualization(frame, [], camera_idx, None, time_left)
                 return display_frame
 
             else:
+                # Режим ожидания
                 time_since_last_check = current_time - self.last_check_time[camera_idx]
                 if time_since_last_check >= self.CHECK_INTERVAL:
                     if self.prev_frames[camera_idx] is not None:
@@ -187,6 +201,7 @@ class HeadlessSurveillanceSystem:
         return frame
 
     def get_grid_frame(self):
+        """Получение текущего кадра сетки для отправки клиенту"""
         frames = []
         current_time = time.time()
         
@@ -204,6 +219,7 @@ class HeadlessSurveillanceSystem:
             small_frame = cv2.resize(processed_frame, (320, 240))
             frames.append(small_frame)
 
+        # Создаем сетку 2x2
         while len(frames) < 4:
             frames.append(get_no_signal_frame(len(frames)))
         
@@ -211,6 +227,7 @@ class HeadlessSurveillanceSystem:
         return grid
 
     def cleanup(self):
+        """Очистка ресурсов"""
         for cam_idx in list(self.active_motion_cameras):
             duration = time.time() - self.motion_start_time[cam_idx]
             motion_logger.log_motion_stopped(cam_idx, duration, 0)
@@ -232,6 +249,7 @@ class OctoServer:
         self.system_thread.start()
 
     def run_system_loop(self):
+        """Основной цикл системы"""
         try:
             while self.running:
                 grid_frame = self.system.get_grid_frame()
@@ -406,4 +424,4 @@ class OctoServer:
 
 if __name__ == "__main__":
     server = OctoServer()
-    server.run()
+    server.run()\

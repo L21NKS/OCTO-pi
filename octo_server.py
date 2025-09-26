@@ -79,27 +79,28 @@ class HeadlessSurveillanceSystem:
         self.active_motion_cameras = set()
 
     def detect_cameras(self):
-        working_cameras = []
-        print("[SYSTEM] Поиск доступных камер...")
+    working_cameras = []
+    print("[SYSTEM] Поиск доступных камер...")
 
-        for i in range(4):  # Проверяем камеры 0-3
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    working_cameras.append(i)
-                    print(f"[SYSTEM] Камера {i} найдена - OK")
-                else:
-                    print(f"[SYSTEM] Камера {i} не возвращает кадры")
-                cap.release()
+    for i in range(10):  # проверим /dev/video0 ... /dev/video9
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                working_cameras.append(i)
+                print(f"[SYSTEM] Камера {i} найдена - OK")
             else:
-                print(f"[SYSTEM] Камера {i} не открывается")
+                print(f"[SYSTEM] Камера {i} не возвращает кадры")
+            cap.release()
+        else:
+            print(f"[SYSTEM] Камера {i} не открывается")
 
-        if not working_cameras:
-            print("[SYSTEM] Предупреждение: не найдено ни одной работающей камеры!")
-            return [0]
+    if not working_cameras:
+        print("[SYSTEM] Предупреждение: не найдено ни одной камеры!")
+        return []
 
-        return working_cameras
+    return working_cameras
+
 
     def initialize(self):
         motion_logger.log_system_event("Инициализация системы видеонаблюдения (HEADLESS)")
@@ -388,3 +389,4 @@ class OctoServer:
 if __name__ == "__main__":
     server = OctoServer()
     server.run()
+
